@@ -1,10 +1,10 @@
 """
-Basler Auto-Brightness Camera Capture Script
+Basler Auto-Brightness Camera Capture Script with Digital Zoom
 ✅ Compatible with latest pypylon version (no AccessModeType)
 """
 
 from pypylon import pylon as py
-from pypylon import genicam  # ✅ Required for IsWritable()
+from pypylon import genicam
 import cv2
 import numpy as np
 import time
@@ -30,6 +30,7 @@ class BaslerAutoCamera:
         self.running = False
         self.auto_adjust = True
         self.current_pixel_format = None
+        self.zoom_factor = 1.0  # 1.0 = no zoom
 
     def initialize_camera(self):
         try:
@@ -44,7 +45,6 @@ class BaslerAutoCamera:
             self.camera.Width.SetValue(self.camera.Width.Max)
             self.camera.Height.SetValue(self.camera.Height.Max)
 
-            # Preferred pixel formats
             preferred = ["RGB8", "BGR8", "BayerRG8", "BayerBG8", "BayerGR8", "BayerGB8", "Mono8"]
             for fmt in preferred:
                 try:
@@ -104,6 +104,22 @@ class BaslerAutoCamera:
             except Exception as e:
                 print("⚠ Error adjusting exposure:", e)
 
+    def digital_zoom(self, img, zoom_factor):
+        if zoom_factor <= 1.0:
+            return img
+        h, w = img.shape[:2]
+        center_x, center_y = w // 2, h // 2
+        radius_x, radius_y = int(w / (2 * zoom_factor)), int(h / (2 * zoom_factor))
+
+        min_x, max_x = center_x - radius_x, center_x + radius_x
+        min_y, max_y = center_y - radius_y, center_y + radius_y
+
+        min_x, min_y = max(0, min_x), max(0, min_y)
+        max_x, max_y = min(w, max_x), min(h, max_y)
+
+        cropped = img[min_y:max_y, min_x:max_x]
+        return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
+
     def add_overlay(self, img, brightness, frame_count):
         try:
             exposure = self.camera.ExposureTime.GetValue()
@@ -118,7 +134,8 @@ class BaslerAutoCamera:
                 f"Brightness: {brightness:.1f} (Target: {self.target_brightness})",
                 f"Exposure: {exposure:.0f} μs",
                 f"Gain: {gain:.1f}",
-                f"Auto-adjust: {'ON' if self.auto_adjust else 'OFF'}"
+                f"Auto-adjust: {'ON' if self.auto_adjust else 'OFF'}",
+                f"Zoom: {self.zoom_factor:.1f}x"
             ]
 
             for i, text in enumerate(lines):
@@ -142,7 +159,7 @@ class BaslerAutoCamera:
             self.camera.StartGrabbing(py.GrabStrategy_LatestImageOnly)
             self.running = True
             print("▶️ Starting continuous capture…")
-            print("  [q] Quit | [a] Toggle auto-adjust | [s] Save image | [+/-] Adjust brightness")
+            print("  [q] Quit | [a] Toggle auto-adjust | [s] Save image | [+/-] Adjust brightness | [ ] Zoom")
 
             frame_count = 0
             last_save_time = time.time()
@@ -156,6 +173,8 @@ class BaslerAutoCamera:
 
                     brightness = self.calculate_brightness(img)
                     self.adjust_exposure(brightness)
+
+                    img = self.digital_zoom(img, self.zoom_factor)
 
                     if display:
                         self.add_overlay(img, brightness, frame_count)
@@ -175,6 +194,12 @@ class BaslerAutoCamera:
                         elif key == ord('-'):
                             self.target_brightness = max(50, self.target_brightness - 10)
                             print(f"Target brightness: {self.target_brightness}")
+                        elif key == ord(']'):
+                            self.zoom_factor = min(5.0, self.zoom_factor + 0.1)
+                            print(f"🔍 Zoom factor: {self.zoom_factor:.1f}x")
+                        elif key == ord('['):
+                            self.zoom_factor = max(1.0, self.zoom_factor - 0.1)
+                            print(f"🔍 Zoom factor: {self.zoom_factor:.1f}x")
 
                     if save_images and (time.time() - last_save_time > save_interval):
                         self.save_single_image(img, frame_count)
